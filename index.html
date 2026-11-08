@@ -17,7 +17,19 @@
     background: var(--bg);
   }
   html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--dim); }
-  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
+  [hidden] { display: none !important; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #start {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    display: grid; place-items: center; padding: 24px;
+    background: transparent; border: 0; cursor: pointer;
+    font: 16px/1.5 var(--mono); color: var(--accent);
+  }
+  #start:focus-visible { outline: 2px solid var(--accent); outline-offset: -6px; }
+  #start small { display: block; font-size: 12px; color: var(--dim); }
+  #start .cursor { animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { #start .cursor { animation: none; } }
   .hud {
     position: fixed; margin: 0; pointer-events: none;
     font: 12px/1.45 var(--mono); font-variant-numeric: tabular-nums;
@@ -25,16 +37,19 @@
   }
   #stats { left: calc(14px + env(safe-area-inset-left, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
   #clock { right: calc(14px + env(safe-area-inset-right, 0px)); top: calc(14px + env(safe-area-inset-top, 0px)); color: var(--accent); }
-  #replay {
+  #controls {
     position: fixed;
     right: calc(14px + env(safe-area-inset-right, 0px));
     bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  }
+  #controls button {
     font: 12px/1 var(--mono); color: var(--dim);
     background: var(--bg); border: 1px solid var(--line); border-radius: 0;
     padding: 9px 12px; cursor: pointer;
   }
-  #replay:hover { color: var(--accent); border-color: var(--accent); }
-  #replay:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #controls button:hover { color: var(--accent); border-color: var(--accent); }
+  #controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
@@ -42,7 +57,11 @@
 <canvas id="c" role="img" aria-label="Букет альстромерий из символов: вырастают стебли, завязывается лента, распускаются цветы"></canvas>
 <pre class="hud" id="clock" aria-hidden="true"></pre>
 <pre class="hud" id="stats" aria-hidden="true"></pre>
-<button id="replay" type="button">распустить заново</button>
+<button id="start" type="button"><span>&gt; нажми, чтобы распустить<span class="cursor">_</span><small>со звуком</small></span></button>
+<div id="controls" hidden>
+  <button id="sound" type="button">звук: вкл</button>
+  <button id="replay" type="button">распустить заново</button>
+</div>
 
 <script>
 'use strict';
@@ -509,7 +528,7 @@ function render(t, dt) {
   const b = smooth(BLOOM[0], BLOOM[1], t);
   const budS = smooth(BUD[0], BUD[1], t);
 
-  drawSky(t);
+  drawSky(skyT);
 
   STEMS.forEach((st, si) => {
     const x0 = clamp((t - STEM[0] - st.t0) / (STEM[1] - STEM[0] - st.t0));
@@ -560,29 +579,219 @@ function render(t, dt) {
     'letters ' + letters.toLocaleString('en-US');
 }
 
+// ---- music -----------------------------------------------------------------
+// Original piano piece, 72 bpm in 4/4. The four intro bars last 13.33 s, so the
+// main theme enters as the last petals open (BLOOM ends at 13.5 s).
+const BPM = 72, BEAT = 60 / BPM, BAR = BEAT * 4, INTRO_BARS = 4, THEME_BARS = 8, AHEAD = 2, VOLUME = 0.72;
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+
+// Left-hand voicings per theme bar; a bar with two chords splits at beat 3.
+const CHORDS = [
+  [[48, 55, 59, 64]],                     // Cmaj7
+  [[47, 55, 62, 67]],                     // G/B
+  [[45, 52, 60, 67]],                     // Am7
+  [[41, 48, 57, 64]],                     // Fmaj7
+  [[38, 45, 57, 65]],                     // Dm7
+  [[43, 50, 59, 62]],                     // G
+  [[40, 47, 55, 62], [45, 52, 60, 67]],   // Em7 Am7
+  [[41, 48, 57, 64], [43, 50, 59, 65]],   // Fmaj7 G7
+];
+// Melody per theme bar: [beat, midi]
+const MELODY = [
+  [[0, 79], [2, 76], [3, 74], [3.5, 76]],
+  [[0, 74], [1.5, 67], [2, 71], [3, 74]],
+  [[0, 72], [1.5, 71], [2, 69], [3, 76]],
+  [[0, 72], [3, 69], [3.5, 72]],
+  [[0, 77], [1.5, 76], [2, 74], [3, 69]],
+  [[0, 71], [1.5, 74], [2, 79]],
+  [[0, 79], [1, 76], [2, 81], [3, 79], [3.5, 76]],
+  [[0, 77], [1.5, 76], [2, 74]],
+];
+const ARP = [0, 1, 2, 3, 2, 1, 2, 1];
+
+function piano(g, t, midi, vel) {
+  const { ac, bus, wave } = g, f = mtof(midi);
+  const tau = mix(1.9, 0.7, clamp((midi - 36) / 60)), end = t + tau * 4.5;
+  const o = ac.createOscillator(), lp = ac.createBiquadFilter(), a = ac.createGain();
+  o.setPeriodicWave(wave); o.frequency.value = f;
+  lp.type = 'lowpass'; lp.Q.value = 0.2;
+  lp.frequency.setValueAtTime(Math.min(9000, f * (3 + vel * 9) + 400), t);
+  lp.frequency.setTargetAtTime(f * 1.8 + 200, t + 0.01, 0.45);
+  a.gain.setValueAtTime(0, t);
+  a.gain.linearRampToValueAtTime(vel * 0.42, t + 0.005);
+  a.gain.setTargetAtTime(0, t + 0.005, tau);
+  o.connect(lp); lp.connect(a); a.connect(bus);
+  o.start(t); o.stop(end);
+}
+function pad(g, t, midi, dur, vel) {
+  const { ac, bus } = g;
+  const o = ac.createOscillator(), lp = ac.createBiquadFilter(), a = ac.createGain();
+  o.type = 'triangle'; o.frequency.value = mtof(midi);
+  lp.type = 'lowpass'; lp.frequency.value = 850;
+  a.gain.setValueAtTime(0, t);
+  a.gain.linearRampToValueAtTime(vel, t + dur * 0.45);
+  a.gain.linearRampToValueAtTime(0, t + dur + 1.2);
+  o.connect(lp); lp.connect(a); a.connect(bus);
+  o.start(t); o.stop(t + dur + 1.3);
+}
+function scheduleBar(g, n, t0, minT) {
+  const hit = (beat, midi, vel) => { const t = t0 + beat * BEAT; if (t >= minT) piano(g, t, midi, vel); };
+  const arp = (chords, vel) => {
+    for (let i = 0; i < 8; i++) {
+      const c = chords[Math.floor(i / 8 * chords.length)];
+      hit(i / 2, c[ARP[i]], vel * (i === 0 ? 1.3 : i % 2 ? 0.8 : 1));
+    }
+  };
+  if (n === 0) { hit(0, 45, 0.5); hit(0, 57, 0.3); hit(1, 64, 0.26); hit(2, 67, 0.28); hit(3, 71, 0.3); return; }
+  if (n === 1) { hit(0, 41, 0.5); hit(0, 53, 0.3); hit(1, 60, 0.28); hit(2, 64, 0.3); hit(3, 69, 0.34); return; }
+  if (n === 2) {  // Dm9: the left hand starts moving as the buds begin to open
+    arp([[38, 45, 57, 64]], 0.24);
+    hit(0, 77, 0.42); hit(2, 76, 0.42); hit(3, 74, 0.44);
+    pad(g, t0, 62, BAR, 0.05); pad(g, t0, 69, BAR, 0.04);
+    return;
+  }
+  if (n === 3) {  // G: a rising run into the theme
+    arp([[43, 50, 59, 65]], 0.3);
+    hit(0, 79, 0.5);
+    [83, 86, 89, 91].forEach((m, i) => hit(2 + i * 0.5, m, 0.24 + i * 0.05));
+    pad(g, t0, 59, BAR, 0.07); pad(g, t0, 67, BAR, 0.06);
+    return;
+  }
+  const k = (n - INTRO_BARS) % (THEME_BARS * 2), pass = k >= THEME_BARS ? 1 : 0, b = k % THEME_BARS;
+  arp(CHORDS[b], pass ? 0.34 : 0.3);
+  const pv = pass ? 0.075 : 0.05, c0 = CHORDS[b][0];
+  pad(g, t0, c0[1] + 12, BAR, pv); pad(g, t0, c0[2], BAR, pv * 0.8);
+  for (const [beat, m] of MELODY[b]) {
+    hit(beat, m, 0.62);
+    hit(beat, m + 0.06, 0.26);          // slight detune warms the top line
+    if (pass) hit(beat, m + 12, 0.24);  // second time through, an octave above
+  }
+}
+function buildGraph(ac) {
+  const real = new Float32Array(8), imag = new Float32Array([0, 1, 0.52, 0.26, 0.14, 0.08, 0.05, 0.03]);
+  const wave = ac.createPeriodicWave(real, imag);
+  const len = Math.floor(ac.sampleRate * 2.8), ir = ac.createBuffer(2, len, ac.sampleRate), R = rng(5);
+  for (let ch_ = 0; ch_ < 2; ch_++) {
+    const d = ir.getChannelData(ch_); let y = 0;
+    for (let i = 0; i < len; i++) {
+      y += (R() * 2 - 1 - y) * 0.42;
+      d[i] = y * Math.exp(-i / ac.sampleRate / 0.72);
+    }
+  }
+  const verb = ac.createConvolver(); verb.buffer = ir;
+  const wet = ac.createGain(); wet.gain.value = 0.55;
+  const dry = ac.createGain(); dry.gain.value = 0.85;
+  const master = ac.createGain();
+  master.gain.value = VOLUME;
+  const comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -9; comp.ratio.value = 8; comp.attack.value = 0.004; comp.release.value = 0.2;
+  verb.connect(wet); wet.connect(master); dry.connect(master); master.connect(comp); comp.connect(ac.destination);
+  const g = { ac, wave, master, dry, verb, bus: null };
+  newBus(g);
+  return g;
+}
+function newBus(g) {
+  const bus = g.ac.createGain();
+  bus.connect(g.dry); bus.connect(g.verb);
+  g.bus = bus;
+}
+
 const FINAL_T = 16;
-let clock = 0, last = 0;
+const startBtn = document.getElementById('start');
+const controls = document.getElementById('controls');
+const soundBtn = document.getElementById('sound');
+const replayBtn = document.getElementById('replay');
+let clock = 0, last = 0, skyT = 0, started = false;
+let audio = null, muted = false, synced = false;
+
+function startAudio() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return false;
+  try {
+    // Lets the sound play on an iPhone with the ringer switch off (Safari 16.4+).
+    if (navigator.audioSession) navigator.audioSession.type = 'playback';
+    const ac = new AC();
+    const g = buildGraph(ac);
+    audio = { ac, g, startAt: ac.currentTime, nextBar: 0 };
+    ac.resume();
+    synced = ac.state === 'running';
+    return true;
+  } catch (e) { audio = null; return false; }
+}
+function tick() {
+  if (!audio || audio.ac.state !== 'running') return;
+  const now = audio.ac.currentTime;
+  while (audio.startAt + audio.nextBar * BAR < now + AHEAD) {
+    scheduleBar(audio.g, audio.nextBar, audio.startAt + audio.nextBar * BAR, now);
+    audio.nextBar++;
+  }
+}
+setInterval(tick, 400);
+
 function loop(now) {
   requestAnimationFrame(loop);
   if (now - last < 31) return;
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  clock += dt;
-  render(clock, dt);
+  skyT += dt;
+  if (started) {
+    // The music is the clock while it runs, so the picture cannot drift from it.
+    if (audio && audio.ac.state === 'running') {
+      if (!synced) { audio.startAt = audio.ac.currentTime - clock; synced = true; }
+      clock = Math.max(0, audio.ac.currentTime - audio.startAt);
+    } else { clock += dt; synced = false; }
+  }
+  render(started ? clock : 0, started ? dt : 0);
+}
+function start() {
+  if (started) return;
+  started = true;
+  startBtn.hidden = true;
+  controls.hidden = false;
+  clock = 0;
+  if (startAudio()) tick(); else soundBtn.hidden = true;
 }
 function replay() {
   if (reduce) return;
   clock = 0; sparks = [];
+  if (!audio) return;
+  const { ac, g } = audio, old = g.bus;
+  old.gain.setTargetAtTime(0, ac.currentTime, 0.06);
+  setTimeout(() => old.disconnect(), 900);
+  newBus(g);
+  audio.startAt = ac.currentTime + 0.05;
+  audio.nextBar = 0;
+  synced = ac.state === 'running';
+  tick();
 }
-
-cv.addEventListener('click', replay);
-document.getElementById('replay').addEventListener('click', replay);
-if (reduce) document.getElementById('replay').hidden = true;
+function setSoundLabel() { soundBtn.textContent = muted ? 'звук: выкл' : 'звук: вкл'; }
+soundBtn.addEventListener('click', () => {
+  if (!audio) {           // reduced-motion view has no start screen
+    muted = false;
+    if (startAudio()) tick();
+    setSoundLabel();
+    return;
+  }
+  muted = !muted;
+  audio.g.master.gain.setTargetAtTime(muted ? 0 : VOLUME, audio.ac.currentTime, 0.05);
+  setSoundLabel();
+});
+startBtn.addEventListener('click', start);
+replayBtn.addEventListener('click', replay);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && audio && audio.ac.state !== 'running') audio.ac.resume();
+});
 window.addEventListener('resize', () => { resize(); if (reduce) render(FINAL_T, 0); });
 
 resize();
-if (reduce) render(FINAL_T, 0);
-else requestAnimationFrame(loop);
+if (reduce) {
+  skyT = FINAL_T;
+  startBtn.hidden = true;
+  controls.hidden = false;
+  replayBtn.hidden = true;
+  soundBtn.textContent = 'звук: выкл';
+  render(FINAL_T, 0);
+} else requestAnimationFrame(loop);
 </script>
 
 </body>
