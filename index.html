@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>html,body{margin:0}</style>
+<title>Букет альстромерий</title>
+<style>
+  /* Layout: one full-bleed terminal screen, the bouquet centred, readouts pinned to the corners. */
+  :root {
+    --bg: #000;
+    --dim: #8a8488;
+    --accent: #ef6aa6;
+    --line: #3a3638;
+    --mono: Consolas, Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace;
+    color-scheme: dark;
+    background: var(--bg);
+  }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--dim); }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
+  .hud {
+    position: fixed; margin: 0; pointer-events: none;
+    font: 12px/1.45 var(--mono); font-variant-numeric: tabular-nums;
+    white-space: pre;
+  }
+  #stats { left: calc(14px + env(safe-area-inset-left, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+  #clock { right: calc(14px + env(safe-area-inset-right, 0px)); top: calc(14px + env(safe-area-inset-top, 0px)); color: var(--accent); }
+  #replay {
+    position: fixed;
+    right: calc(14px + env(safe-area-inset-right, 0px));
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    font: 12px/1 var(--mono); color: var(--dim);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 0;
+    padding: 9px 12px; cursor: pointer;
+  }
+  #replay:hover { color: var(--accent); border-color: var(--accent); }
+  #replay:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<canvas id="c" role="img" aria-label="Букет альстромерий из символов: вырастают стебли, завязывается лента, распускаются цветы"></canvas>
+<pre class="hud" id="clock" aria-hidden="true"></pre>
+<pre class="hud" id="stats" aria-hidden="true"></pre>
+<button id="replay" type="button">распустить заново</button>
+
+<script>
+'use strict';
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d', { alpha: false });
+const glow = document.createElement('canvas');
+const gctx = glow.getContext('2d');
+const hudClock = document.getElementById('clock');
+const hudStats = document.getElementById('stats');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const PI = Math.PI, TAU = PI * 2;
+const clamp = (x, a = 0, b = 1) => x < a ? a : x > b ? b : x;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const mix = (a, b, t) => a + (b - a) * t;
+function rng(seed) {
+  return () => {
+    seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Timeline, seconds
+const STEM = [0.3, 3.4], PEDICEL = [2.8, 4.6], BUD = [3.4, 5.0], TIE = [4.2, 5.4], BLOOM = [5.0, 13.5];
+
+// Colour kinds
+const PINK = 1, APRICOT = 2, LILAC = 3, CREAM = 4, YELLOW = 5, SPECK = 6, GREEN = 7, RIBBON = 8;
+const PALETTE = [
+  [[70, 10, 42],  [255, 92, 160]],
+  [[84, 26, 6],   [255, 142, 48]],
+  [[42, 18, 80],  [188, 128, 255]],
+  [[72, 62, 60],  [255, 240, 226]],
+  [[92, 62, 0],   [255, 216, 40]],
+  [[72, 8, 30],   [176, 30, 72]],
+  [[6, 58, 26],   [62, 240, 104]],
+  [[72, 42, 30],  [244, 192, 150]],
+];
+
+// ---- bouquet layout --------------------------------------------------------
+// Each stem ends in an umbel: a point where several flower stalks split off.
+// Flower: [x, y, z, colour, isBud, isSmall]
+const STEMS = [
+  { u: [-1.00, -0.40, -0.15], f: [[-1.30, 0.40, 0.20, CREAM], [-1.30, 1.85, 0.10, LILAC], [-1.92, 1.15, -0.20, PINK, 0, 1], [-2.28, 0.35, -0.10, APRICOT, 1], [-2.08, 2.70, -0.20, PINK, 1]] },
+  { u: [-0.35,  0.60, -0.35], f: [[0.00, 2.60, -0.05, CREAM], [-0.85, 3.40, -0.30, LILAC, 1]] },
+  { u: [ 0.00, -0.60,  0.10], f: [[0.00, -0.25, 0.35, APRICOT], [0.00, 1.15, 0.55, PINK]] },
+  { u: [ 0.35,  0.60, -0.35], f: [[1.30, 1.85, 0.10, APRICOT], [0.85, 3.40, -0.30, PINK, 1]] },
+  { u: [ 1.00, -0.40, -0.15], f: [[1.30, 0.40, 0.20, LILAC], [1.92, 1.15, -0.20, CREAM, 0, 1], [2.28, 0.35, -0.10, CREAM, 1], [2.08, 2.70, -0.20, APRICOT, 1]] },
+];
+const R0 = rng(23);
+const FLOWERS = [];
+STEMS.forEach((st, si) => {
+  const ux = st.u[0];
+  st.base = [-ux * 0.22, -3.1, st.u[2] * 0.3];
+  st.mid = [ux * 0.1, -2.0, st.u[2] * 0.1];
+  st.ctl = [0, 1, 2].map(i => st.mid[i] + (st.mid[i] - st.base[i]) * 0.55);
+  st.t0 = R0() * 0.35;
+  st.f.forEach(f => {
+    const [x, y, z, kind, bud, small] = f;
+    let d = bud ? [x * 0.7, (y - 1) * 0.6 + 0.5, 0.25] : [x * 0.3, (y - 1.15) * 0.3 + 0.08, 1];
+    const m = Math.hypot(...d); d = d.map(v => v / m);
+    const e1m = Math.hypot(d[2], d[0]);
+    const e1 = [d[2] / e1m, 0, -d[0] / e1m];
+    const e2 = [d[1] * e1[2] - d[2] * e1[1], d[2] * e1[0] - d[0] * e1[2], d[0] * e1[1] - d[1] * e1[0]];
+    FLOWERS.push({ si, p: [x, y, z], kind, bud: !!bud, d, e1, e2, size: bud ? 1.25 : small ? 1.1 : 1.6,
+      delay: R0() * 0.42, ph: R0() * TAU, t0: R0() * 0.5 });
+  });
+});
+const LEAVES = [
+  [0, 0.85, -1.00, -0.10, 1.35, 0.12, 0.30, 0.20, 2.4],
+  [0, 0.75, -0.80, -0.60, 1.20, 0.11, 0.25, 0.25, -2.1],
+  [4, 0.85,  1.00, -0.10, 1.35, 0.12, 0.30, 0.20, -2.4],
+  [4, 0.75,  0.80, -0.60, 1.20, 0.11, 0.25, 0.25, 2.1],
+  [2, 0.80, -0.45, -1.00, 0.95, 0.10, 0.10, 0.60, 1.8],
+  [2, 0.80,  0.45, -1.00, 0.95, 0.10, 0.10, 0.60, -1.8],
+  [1, 0.95, -0.95,  0.60, 1.70, 0.11, 0.15, -0.40, 2.0],
+  [3, 0.95,  0.95,  0.60, 1.70, 0.11, 0.15, -0.40, -2.0],
+];
+
+function stemAt(st, s) {
+  const a = st.base, b = st.mid, c = st.ctl, u = st.u;
+  if (s < 0.38) { const t = s / 0.38; return [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)]; }
+  const t = (s - 0.38) / 0.62, q = 1 - t, q2 = q * q, qt = 2 * q * t, t2 = t * t;
+  return [q2 * b[0] + qt * c[0] + t2 * u[0], q2 * b[1] + qt * c[1] + t2 * u[1], q2 * b[2] + qt * c[2] + t2 * u[2]];
+}
+function pedicelAt(F, g) {
+  const U = STEMS[F.si].u, P = F.p;
+  const cx_ = mix(U[0], P[0], 0.35), cy_ = mix(U[1], P[1], 0.8), cz_ = mix(U[2], P[2], 0.5);
+  const q = 1 - g, q2 = q * q, qt = 2 * q * g, t2 = g * g;
+  return [q2 * U[0] + qt * cx_ + t2 * P[0], q2 * U[1] + qt * cy_ + t2 * P[1], q2 * U[2] + qt * cz_ + t2 * P[2]];
+}
+
+// ---- character grid --------------------------------------------------------
+const FACE = 'Consolas, Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace';
+const SCENE_COLS = 170, SCENE_ROWS = 110, WORLD_SHIFT = -0.3;
+const RAMP = '~=+<>ivclrjtfxzsunoeaw[]{}()QO0$&8%B#@';
+const SPECK_GLYPHS = "':;!";
+const G = []; for (let i = 0; i < 128; i++) G[i] = String.fromCharCode(i);
+const code = s => s.charCodeAt(0);
+const C_BAR = code('|'), C_DASH = code('-'), C_LOW = code('_'), C_FS = code('/'), C_BS = code('\\');
+const C_STAR = code('*');
+const STAR_CHARS = [".", "'", "`", "+", "*"].map(code);
+const SPARK_CHARS = [".", "'", "+", "*"].map(code);
+
+let W, H, dpr, font, cw, ch, cols, rows, cx, cy, S, Sy, N;
+let zb, kd, idb, lu, out, bgc, bgl, noise;
+let stars = [], flares = [];
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 3);
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  glow.width = Math.max(1, W >> 2); glow.height = Math.max(1, H >> 2);
+
+  ctx.font = '100px ' + FACE;
+  const r = ctx.measureText('M').width / 100, lk = 1.12;
+  font = Math.max(3.5, Math.min(W / (SCENE_COLS * r), H / (SCENE_ROWS * lk)));
+  cw = font * r; ch = font * lk;
+  ctx.font = font + 'px ' + FACE;
+  ctx.textBaseline = 'top';
+  cols = Math.ceil(W / cw); rows = Math.ceil(H / ch);
+  cx = cols / 2; cy = rows / 2;
+  S = 31; Sy = S * cw / ch;
+  N = cols * rows;
+
+  zb = new Float32Array(N); kd = new Uint8Array(N); idb = new Int16Array(N);
+  lu = new Float32Array(N); out = new Uint8Array(N);
+  bgc = new Uint8Array(N); bgl = new Float32Array(N);
+  noise = new Float32Array(N);
+  const R = rng(7);
+  for (let i = 0; i < N; i++) noise[i] = R() * 3 - 1.5;
+
+  stars = [];
+  const nStars = Math.round(N / 80);
+  for (let i = 0; i < nStars; i++) stars.push({
+    i: (R() * rows | 0) * cols + (R() * cols | 0),
+    c: STAR_CHARS[R() * STAR_CHARS.length | 0],
+    b: 0.25 + R() * 0.75, ph: R() * TAU, sp: 0.5 + R() * 2.4,
+  });
+  flares = [];
+  const nFlares = Math.max(8, Math.round(N / 1500));
+  for (let i = 0; i < nFlares; i++) flares.push({
+    c: 3 + R() * (cols - 6) | 0, r: 3 + R() * (rows - 6) | 0,
+    len: 4 + R() * 9, ph: R() * TAU, sp: 0.35 + R() * 0.8,
+  });
+}
+
+function put(x, y, z, kind, id, l) {
+  const p = 1 / (1 - z * 0.09);
+  const c = Math.floor(cx + x * S * p), r = Math.floor(cy - (y + WORLD_SHIFT) * Sy * p);
+  if (c < 0 || c >= cols || r < 0 || r >= rows) return;
+  const i = r * cols + c;
+  if (z > zb[i]) { zb[i] = z; kd[i] = kind; idb[i] = id; lu[i] = l; }
+}
+function putBg(c, r, ch_, l) {
+  if (c < 0 || c >= cols || r < 0 || r >= rows) return;
+  const i = r * cols + c;
+  if (l > bgl[i]) { bgl[i] = l; bgc[i] = ch_; }
+}
+
+// ---- geometry --------------------------------------------------------------
+const MAXP = 8000;
+const px = new Float32Array(MAXP), py = new Float32Array(MAXP), pz = new Float32Array(MAXP);
+const LM = Math.hypot(-0.42, 0.72, 0.56), LX = -0.42 / LM, LY = 0.72 / LM, LZ = 0.56 / LM;
+
+// Whole-bouquet sway, applied to every point.
+let vLean = 0, vc = 1, vs = 0;
+const VIEW = [0, 0, 0];
+function view(x, y, z) {
+  const h = (y + 3.1) / 6.5;
+  const x1 = x + vLean * h * h;
+  VIEW[0] = x1 * vc + z * vs; VIEW[1] = y; VIEW[2] = -x1 * vs + z * vc;
+}
+function store(a, x, y, z) {
+  view(x, y, z);
+  px[a] = VIEW[0]; py[a] = VIEW[1]; pz[a] = VIEW[2];
+}
+
+function shadeGrid(nu, nv, kindOf, id, baseOf) {
+  for (let i = 1; i < nu; i++) for (let j = 1; j < nv; j++) {
+    const a = i * nv + j, bu = a - nv, bv = a - 1;
+    const ux = px[a] - px[bu], uy = py[a] - py[bu], uz = pz[a] - pz[bu];
+    const vx = px[a] - px[bv], vy = py[a] - py[bv], vz = pz[a] - pz[bv];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const m = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (m < 1e-10) continue;
+    nx /= m; ny /= m; nz /= m;
+    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    const d = nx * LX + ny * LY + nz * LZ;
+    put(px[a], py[a], pz[a], kindOf(i, j), id, (0.24 + 0.76 * (d > 0 ? d : 0)) * baseOf(i, j));
+  }
+}
+
+function tube(fn, g, r0, r1, nS, id) {
+  const NA = 8, n = Math.max(2, Math.ceil(nS * g));
+  for (let k = 0; k < n; k++) {
+    const s = g * k / (n - 1), c = fn(s), rad = mix(r0, r1, s);
+    view(c[0], c[1], c[2]);
+    const X = VIEW[0], Y = VIEW[1], Z = VIEW[2];
+    for (let a = 0; a < NA; a++) {
+      const ang = a / NA * PI, ca = Math.cos(ang), sa = Math.sin(ang);
+      const d = ca * LX + sa * LZ;
+      put(X + ca * rad, Y, Z + sa * rad, GREEN, id, (0.36 + 0.64 * Math.max(0, d)) * 1.05);
+    }
+  }
+}
+
+function drawLeaf(L, idx, g) {
+  if (g <= 0) return;
+  const [si, s, dx, dy, len, wid, droop, zo, tw] = L;
+  const NU = 70, NV = 9, b = stemAt(STEMS[si], s);
+  const dm = Math.hypot(dx, dy), ox = dx / dm, oy = dy / dm;
+  for (let i = 0; i < NU; i++) {
+    const u0 = i / (NU - 1), u = u0 * g;
+    const w = wid * Math.pow(Math.sin(PI * Math.pow(u0, 0.7)), 0.8) * smooth(0.1, 0.8, g);
+    const ax = b[0] + ox * len * u, ay = b[1] + oy * len * u - droop * u * u, az = b[2] + zo * u;
+    const tw_ = tw * u0, ct = Math.cos(tw_), st = Math.sin(tw_);
+    for (let j = 0; j < NV; j++) {
+      const v = (j / (NV - 1) * 2 - 1) * w;
+      store(i * NV + j, ax - oy * v * ct, ay + ox * v * ct, az + v * st);
+    }
+  }
+  shadeGrid(NU, NV, () => GREEN, 10 + idx, (i, j) => 0.88 + 0.28 * (1 - Math.abs(j / (NV - 1) * 2 - 1)));
+}
+
+function drawTepal(F, idx, k, e, sc, tx, ty, tz) {
+  const NU = F.bud ? 30 : 48, NV = F.bud ? 9 : 21, outer = k % 2 === 1, a = PI / 6 + k * PI / 3;
+  const marked = !F.bud && (k === 0 || k === 2);
+  const ca = Math.cos(a), sa = Math.sin(a), L = 0.58, ds = L / NU;
+  const W_ = (outer ? 0.205 : 0.15) * mix(0.55, 1, e);
+  const [e1, e2, d] = [F.e1, F.e2, F.d];
+  let rad = 0.025, h = 0;
+  for (let i = 0; i < NU; i++) {
+    const u = i / (NU - 1);
+    const open = outer ? 0.75 + 0.85 * Math.pow(u, 1.5) : 0.62 + 0.8 * Math.pow(u, 1.6);
+    const al = mix(0.34 - 0.7 * u, open, e), sA = Math.sin(al), cA = Math.cos(al);
+    rad += sA * ds; h += cA * ds;
+    const w = W_ * Math.pow(Math.sin(PI * Math.pow(u, outer ? 0.8 : 1.15)), 0.7);
+    for (let j = 0; j < NV; j++) {
+      const v = j / (NV - 1) * 2 - 1, cup = v * v * w * 0.4;
+      const R = rad - cA * cup, Z = h + sA * cup, t = v * w;
+      const X = (ca * R - sa * t) * sc, Y = (sa * R + ca * t) * sc, Zs = Z * sc;
+      store(i * NV + j,
+        tx + e1[0] * X + e2[0] * Y + d[0] * Zs,
+        ty + e1[1] * X + e2[1] * Y + d[1] * Zs,
+        tz + e1[2] * X + e2[2] * Y + d[2] * Zs);
+    }
+  }
+  const kindOf = (i, j) => {
+    const u = i / (NU - 1), v = Math.abs(j / (NV - 1) * 2 - 1);
+    if (F.bud) return u < 0.4 ? GREEN : F.kind;
+    if (u < 0.1) return YELLOW;
+    if (marked && u < 0.72 && v < 0.78) {
+      if (u > 0.18 && ((i >> 2) * 7 + (j >> 2) * 13 + k) % 3 === 0) return SPECK;
+      return YELLOW;
+    }
+    return F.kind;
+  };
+  shadeGrid(NU, NV, kindOf, 1000 + idx * 10 + k, (i, j) => {
+    const u = i / (NU - 1);
+    return (0.6 + 0.62 * u) * (outer ? 1 : 1.08);
+  });
+}
+
+function drawStamens(F, idx, e, sc, tx, ty, tz) {
+  const g = smooth(0.35, 0.95, e);
+  if (g <= 0) return;
+  const [e1, e2, d] = [F.e1, F.e2, F.d];
+  for (let k = 0; k < 6; k++) {
+    const b = (k - 2.5) * 0.28, N_ = 16;
+    for (let i = 1; i <= N_; i++) {
+      const u = i / N_ * g;
+      const X = Math.sin(b) * 0.2 * u * sc, Y = (0.05 * u - 0.22 * u * u) * sc, Z = (0.04 + 0.34 * u) * sc;
+      view(tx + e1[0] * X + e2[0] * Y + d[0] * Z, ty + e1[1] * X + e2[1] * Y + d[1] * Z, tz + e1[2] * X + e2[2] * Y + d[2] * Z);
+      put(VIEW[0], VIEW[1], VIEW[2], i >= N_ - 1 ? SPECK : CREAM, 3000 + idx, i >= N_ - 1 ? 1 : 0.7);
+    }
+  }
+}
+
+function drawRibbon(g) {
+  if (g <= 0) return;
+  // Band around the stems
+  const y0 = -2.0, R_ = 0.3, H_ = 0.11 * g, NA = 60, NV = 5;
+  for (let i = 0; i < NA; i++) {
+    const a = i / (NA - 1) * PI;
+    for (let j = 0; j < NV; j++) {
+      const v = j / (NV - 1) * 2 - 1;
+      store(i * NV + j, Math.cos(a) * R_, y0 + v * H_, Math.sin(a) * R_);
+    }
+  }
+  shadeGrid(NA, NV, () => RIBBON, 900, () => 1.05);
+  // Bow loops and tails
+  for (const side of [-1, 1]) {
+    const NU = 44, NW = 5;
+    for (let i = 0; i < NU; i++) {
+      const u = i / (NU - 1), a = u * TAU;
+      const bx = side * 0.36 * g * (1 - Math.cos(a)) / 2, by = y0 + 0.13 * Math.sin(a) + 0.04;
+      for (let j = 0; j < NW; j++) {
+        const v = (j / (NW - 1) * 2 - 1) * 0.055;
+        store(i * NW + j, bx, by + v, R_ + 0.04 + v * 0.8);
+      }
+    }
+    shadeGrid(NU, NW, () => RIBBON, 901 + (side > 0 ? 1 : 0), () => 1.0);
+    for (let i = 0; i < NU; i++) {
+      const u = i / (NU - 1) * g;
+      const bx = side * (0.05 + 0.32 * u) + 0.05 * Math.sin(u * 8), by = y0 - 0.85 * u;
+      for (let j = 0; j < NW; j++) {
+        const v = (j / (NW - 1) * 2 - 1) * 0.05;
+        store(i * NW + j, bx + v, by + v * 0.3, R_ + 0.06 + 0.05 * Math.cos(u * 9) * v * 12);
+      }
+    }
+    shadeGrid(NU, NW, () => RIBBON, 903 + (side > 0 ? 1 : 0), () => 0.95);
+  }
+}
+
+// ---- sky and sparks --------------------------------------------------------
+function drawSky(t) {
+  const fade = smooth(0, 1.2, t);
+  for (const s of stars) {
+    const w = 0.5 + 0.5 * Math.sin(t * s.sp + s.ph), l = s.b * w * w * 0.75 * fade;
+    if (l > bgl[s.i]) { bgl[s.i] = l; bgc[s.i] = s.c; }
+  }
+  for (const f of flares) {
+    const w = Math.pow(Math.max(0, Math.sin(t * f.sp + f.ph)), 3) * fade;
+    if (w < 0.03) continue;
+    const L = Math.round(f.len * Math.sqrt(w));
+    putBg(f.c, f.r, C_STAR, w);
+    for (let d = 1; d <= L; d++) {
+      const l = w * 0.8 * (1 - d / (L + 1));
+      putBg(f.c + d, f.r, C_DASH, l); putBg(f.c - d, f.r, C_DASH, l);
+      const v = Math.round(d * 0.55);
+      if (d % 2 === 0) { putBg(f.c, f.r + v, C_BAR, l); putBg(f.c, f.r - v, C_BAR, l); }
+      if (d % 2 === 1 && d < L * 0.7) {
+        const q = Math.round(d * 0.4) + 1;
+        putBg(f.c + d, f.r - q, C_FS, l * 0.7); putBg(f.c - d, f.r + q, C_FS, l * 0.7);
+        putBg(f.c + d, f.r + q, C_BS, l * 0.7); putBg(f.c - d, f.r - q, C_BS, l * 0.7);
+      }
+    }
+  }
+}
+let sparks = [];
+function emit(x, y, spread, up, life) {
+  if (sparks.length > 700) return;
+  const a = Math.random() * TAU, v = Math.random() * spread;
+  sparks.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v * 0.7 + up, age: 0, life: life * (0.5 + Math.random()) });
+}
+function stepSparks(dt) {
+  for (let k = sparks.length - 1; k >= 0; k--) {
+    const p = sparks[k];
+    p.age += dt;
+    if (p.age > p.life) { sparks[k] = sparks[sparks.length - 1]; sparks.pop(); continue; }
+    p.vy -= 0.34 * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    const k1 = 1 - p.age / p.life;
+    const c = Math.floor(cx + p.x * S), r = Math.floor(cy - (p.y + WORLD_SHIFT) * Sy);
+    putBg(c, r, SPARK_CHARS[Math.min(3, k1 * 4 | 0)], k1 * (0.55 + 0.45 * Math.sin(p.age * 21 + p.life * 40) ** 2));
+  }
+}
+
+// ---- output ----------------------------------------------------------------
+const TONES = 16, KINDS = PALETTE.length;
+const lists = [], fills = [];
+for (const [lo, hi] of PALETTE) for (let k = 0; k < TONES; k++) {
+  const t = k / (TONES - 1), s = Math.sqrt(t), w = smooth(0.78, 1, t) * 0.4;
+  const c = i => { const v = mix(lo[i], hi[i], s); return mix(v, 255, w) | 0; };
+  fills.push(`rgb(${c(0)},${c(1)},${c(2)})`);
+  lists.push([]);
+}
+for (let k = 0; k < TONES; k++) {  // sky
+  const t = (k + 1) / TONES;
+  fills.push(`rgb(${236 * t | 0},${230 * t | 0},${244 * t | 0})`);
+  lists.push([]);
+}
+
+let letters = 0;
+function compose() {
+  letters = 0;
+  const rampMax = RAMP.length - 1;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const i = r * cols + c, k = kd[i];
+    if (!k) {
+      const l = bgl[i];
+      if (l > 0.03) { out[i] = bgc[i]; lists[TONES * KINDS + Math.min(TONES - 1, l * TONES | 0)].push(i); }
+      continue;
+    }
+    letters++;
+    let l = lu[i], glyph;
+    if (k === SPECK) {
+      glyph = SPECK_GLYPHS.charCodeAt((noise[i] + 1.5) / 3 * 3.99 | 0);
+      l = Math.max(l, 0.7);
+    } else {
+      let gx = 0, gy = 0, hit = 0;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const r2 = r + dr, c2 = c + dc;
+        let diff;
+        if (r2 < 0 || r2 >= rows || c2 < 0 || c2 >= cols) diff = true;
+        else {
+          const n = r2 * cols + c2;
+          diff = !kd[n] || (idb[n] !== idb[i] && zb[n] < zb[i] - 0.015) || zb[n] < zb[i] - 0.2;
+        }
+        if (diff) { gx += dc; gy += dr; hit++; }
+      }
+      if (hit && (gx || gy)) {
+        const ax = Math.abs(gx), ay = Math.abs(gy);
+        if (ax > 2 * ay) glyph = C_BAR;
+        else if (ay > 2 * ax) glyph = gy > 0 ? C_LOW : C_DASH;
+        else glyph = gx * gy > 0 ? C_FS : C_BS;
+        l = Math.max(l * 1.2, 0.56);
+      } else {
+        const q = Math.pow(clamp(l), 0.85) * rampMax + noise[i];
+        glyph = RAMP.charCodeAt(clamp(q | 0, 0, rampMax));
+      }
+    }
+    out[i] = glyph;
+    lists[(k - 1) * TONES + Math.min(TONES - 1, clamp(l) * TONES | 0)].push(i);
+  }
+}
+function reflect(baseY) {
+  const rb = Math.floor(cy - (baseY + WORLD_SHIFT) * Sy), D = 13, c0 = Math.floor(cx);
+  for (let d = 1; d <= D; d++) {
+    const src = rb - d * 2, dst = rb + d;
+    if (src < 0 || dst >= rows) break;
+    const l = 0.22 * (1 - d / (D + 1));
+    for (let c = c0 - 16; c <= c0 + 16; c++) {
+      if (c < 0 || c >= cols) continue;
+      const i = src * cols + c;
+      if (kd[i] === GREEN) putBg(c, dst, RAMP.charCodeAt((noise[i] + 1.5) * 4 + 6 | 0), l);
+    }
+  }
+}
+function paint() {
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  for (let b = 0; b < lists.length; b++) {
+    const L = lists[b];
+    if (!L.length) continue;
+    ctx.fillStyle = fills[b];
+    for (let n = 0; n < L.length; n++) {
+      const i = L[n], c = i % cols, r = (i - c) / cols;
+      ctx.fillText(G[out[i]], c * cw, r * ch);
+    }
+    L.length = 0;
+  }
+  gctx.globalCompositeOperation = 'copy';
+  gctx.drawImage(cv, 0, 0, glow.width, glow.height);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.4;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(glow, 0, 0, W, H);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+// ---- frame -----------------------------------------------------------------
+function render(t, dt) {
+  zb.fill(-1e9); kd.fill(0); bgl.fill(0);
+
+  const swayA = t * 0.4, ga = 0.2 * Math.sin(swayA);
+  vc = Math.cos(ga); vs = Math.sin(ga);
+  vLean = 0.12 * Math.sin(t * 0.55);
+  const b = smooth(BLOOM[0], BLOOM[1], t);
+  const budS = smooth(BUD[0], BUD[1], t);
+
+  drawSky(t);
+
+  STEMS.forEach((st, si) => {
+    const x0 = clamp((t - STEM[0] - st.t0) / (STEM[1] - STEM[0] - st.t0));
+    const g = 1 - (1 - x0) * (1 - x0);
+    if (g <= 0) return;
+    tube(s => stemAt(st, s), g, 0.034, 0.024, 170, 1 + si);
+    if (dt > 0 && x0 < 1) {
+      const c = stemAt(st, g); view(c[0], c[1], c[2]);
+      emit(VIEW[0], VIEW[1], 0.5, 0.12, 1.2);
+    }
+  });
+
+  LEAVES.forEach((L, i) => drawLeaf(L, i, smooth(2.4 + i * 0.2, 4.6 + i * 0.2, t)));
+  drawRibbon(smooth(TIE[0], TIE[1], t));
+
+  FLOWERS.forEach((F, idx) => {
+    const gp = smooth(PEDICEL[0] + F.t0, PEDICEL[1], t);
+    if (gp <= 0) return;
+    tube(s => pedicelAt(F, s), gp, 0.018, 0.013, 70, 100 + idx);
+    if (budS <= 0) return;
+    const tip = pedicelAt(F, gp);
+    const nod = 0.02 * Math.sin(t * 0.7 + F.ph);
+    const tx = tip[0] + nod, ty = tip[1] + nod * 0.6, tz = tip[2];
+    const e = F.bud ? 0.04 * b : smooth(F.delay, F.delay + 0.58, b);
+    const sc = budS * F.size * (F.bud ? 0.78 : mix(0.64, 1, e));
+    for (let k = 0; k < 6; k++) {
+      const e_k = k % 2 ? e : smooth(0.08, 1, e);
+      drawTepal(F, idx, k, e_k, sc, tx, ty, tz);
+    }
+    if (!F.bud) drawStamens(F, idx, e, sc, tx, ty, tz);
+  });
+
+  if (dt > 0 && b > 0) {
+    if (Math.random() < 0.22 + (b < 1 ? 0.5 : 0)) {
+      const a = Math.random() * TAU, r = 0.75 + 0.45 * Math.random();
+      emit(Math.cos(a) * 2.6 * r, 1.3 + Math.sin(a) * 2.5 * r, 0.1, 0.1, 2.6);
+    }
+  }
+  if (t > STEM[1]) reflect(-3.1);
+  stepSparks(dt);
+  compose();
+  paint();
+
+  hudClock.textContent = 't ' + t.toFixed(2) + 's';
+  hudStats.textContent =
+    'bloom ' + (b * 100).toFixed(1) + '%\n' +
+    'sway ' + ((swayA * 180 / PI) % 360).toFixed(2) + '°\n' +
+    'letters ' + letters.toLocaleString('en-US');
+}
+
+const FINAL_T = 16;
+let clock = 0, last = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (now - last < 31) return;
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  clock += dt;
+  render(clock, dt);
+}
+function replay() {
+  if (reduce) return;
+  clock = 0; sparks = [];
+}
+
+cv.addEventListener('click', replay);
+document.getElementById('replay').addEventListener('click', replay);
+if (reduce) document.getElementById('replay').hidden = true;
+window.addEventListener('resize', () => { resize(); if (reduce) render(FINAL_T, 0); });
+
+resize();
+if (reduce) render(FINAL_T, 0);
+else requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
