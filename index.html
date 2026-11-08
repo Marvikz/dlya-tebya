@@ -57,7 +57,7 @@
 <canvas id="c" role="img" aria-label="Букет альстромерий из символов: вырастают стебли, завязывается лента, распускаются цветы"></canvas>
 <pre class="hud" id="clock" aria-hidden="true"></pre>
 <pre class="hud" id="stats" aria-hidden="true"></pre>
-<button id="start" type="button"><span>&gt; нажми, чтобы распустить<span class="cursor">_</span><small>со звуком</small></span></button>
+<button id="start" type="button" disabled><span><span id="startText">&gt; загружаю музыку</span><span class="cursor">_</span><small id="startNote">со звуком</small></span></button>
 <div id="controls" hidden>
   <button id="sound" type="button">звук: вкл</button>
   <button id="replay" type="button">распустить заново</button>
@@ -106,11 +106,24 @@ const PALETTE = [
 // Each stem ends in an umbel: a point where several flower stalks split off.
 // Flower: [x, y, z, colour, isBud, isSmall]
 const STEMS = [
-  { u: [-1.00, -0.40, -0.15], f: [[-1.30, 0.40, 0.20, CREAM], [-1.30, 1.85, 0.10, LILAC], [-1.92, 1.15, -0.20, PINK, 0, 1], [-2.28, 0.35, -0.10, APRICOT, 1], [-2.08, 2.70, -0.20, PINK, 1]] },
-  { u: [-0.35,  0.60, -0.35], f: [[0.00, 2.60, -0.05, CREAM], [-0.85, 3.40, -0.30, LILAC, 1]] },
-  { u: [ 0.00, -0.60,  0.10], f: [[0.00, -0.25, 0.35, APRICOT], [0.00, 1.15, 0.55, PINK]] },
-  { u: [ 0.35,  0.60, -0.35], f: [[1.30, 1.85, 0.10, APRICOT], [0.85, 3.40, -0.30, PINK, 1]] },
-  { u: [ 1.00, -0.40, -0.15], f: [[1.30, 0.40, 0.20, LILAC], [1.92, 1.15, -0.20, CREAM, 0, 1], [2.28, 0.35, -0.10, CREAM, 1], [2.08, 2.70, -0.20, APRICOT, 1]] },
+  { u: [-1.00, -0.40, -0.15], f: [
+    [-1.02, 0.61, 0.30, CREAM, 0, 1.55], [-1.02, 1.79, 0.30, LILAC, 0, 1.55],
+    [-1.82, 1.20, 0.02, APRICOT, 0, 1.35], [-0.92, -0.42, 0.02, PINK, 0, 1.35],
+    [-1.72, 0.12, -0.25, LILAC, 0, 1.15], [-1.72, 2.30, -0.25, PINK, 0, 1.15],
+    [-2.55, 0.55, -0.10, APRICOT, 1], [-2.45, 2.90, -0.20, PINK, 1]] },
+  { u: [-0.35, 0.60, -0.35], f: [
+    [0.00, 2.38, 0.30, CREAM, 0, 1.55], [-0.92, 2.85, 0.02, APRICOT, 0, 1.35],
+    [0.00, 3.30, -0.25, PINK, 0, 1.15], [-1.45, 3.35, -0.30, LILAC, 1]] },
+  { u: [0.00, -0.60, 0.10], f: [
+    [0.00, 1.20, 0.60, PINK, 0, 1.6], [0.00, 0.02, 0.30, APRICOT, 0, 1.55],
+    [0.00, -0.95, -0.10, LILAC, 0, 1.15]] },
+  { u: [0.35, 0.60, -0.35], f: [
+    [1.02, 1.79, 0.30, APRICOT, 0, 1.55], [0.92, 2.85, 0.02, LILAC, 0, 1.35],
+    [1.45, 3.35, -0.30, PINK, 1]] },
+  { u: [1.00, -0.40, -0.15], f: [
+    [1.02, 0.61, 0.30, LILAC, 0, 1.55], [1.82, 1.20, 0.02, PINK, 0, 1.35],
+    [0.92, -0.42, 0.02, CREAM, 0, 1.35], [1.72, 0.12, -0.25, APRICOT, 0, 1.15],
+    [1.72, 2.30, -0.25, CREAM, 0, 1.15], [2.55, 0.55, -0.10, CREAM, 1], [2.45, 2.90, -0.20, APRICOT, 1]] },
 ];
 const R0 = rng(23);
 const FLOWERS = [];
@@ -127,7 +140,7 @@ STEMS.forEach((st, si) => {
     const e1m = Math.hypot(d[2], d[0]);
     const e1 = [d[2] / e1m, 0, -d[0] / e1m];
     const e2 = [d[1] * e1[2] - d[2] * e1[1], d[2] * e1[0] - d[0] * e1[2], d[0] * e1[1] - d[1] * e1[0]];
-    FLOWERS.push({ si, p: [x, y, z], kind, bud: !!bud, d, e1, e2, size: bud ? 1.25 : small ? 1.1 : 1.6,
+    FLOWERS.push({ si, p: [x, y, z], kind, bud: !!bud, d, e1, e2, size: bud ? 1.25 : small || 1.6,
       delay: R0() * 0.42, ph: R0() * TAU, t0: R0() * 0.5 });
   });
 });
@@ -157,14 +170,14 @@ function pedicelAt(F, g) {
 
 // ---- character grid --------------------------------------------------------
 const FACE = 'Consolas, Menlo, "DejaVu Sans Mono", "Liberation Mono", monospace';
-const SCENE_COLS = 170, SCENE_ROWS = 110, WORLD_SHIFT = -0.3;
+const SCENE_COLS = 170, SCENE_ROWS = 100, WORLD_SHIFT = -0.3;
 const RAMP = '~=+<>ivclrjtfxzsunoeaw[]{}()QO0$&8%B#@';
 const SPECK_GLYPHS = "':;!";
 const G = []; for (let i = 0; i < 128; i++) G[i] = String.fromCharCode(i);
 const code = s => s.charCodeAt(0);
 const C_BAR = code('|'), C_DASH = code('-'), C_LOW = code('_'), C_FS = code('/'), C_BS = code('\\');
 const C_STAR = code('*');
-const STAR_CHARS = [".", "'", "`", "+", "*"].map(code);
+const STAR_CHARS = ["+", "*", "+", "*", "."].map(code);
 const SPARK_CHARS = [".", "'", "+", "*"].map(code);
 
 let W, H, dpr, font, cw, ch, cols, rows, cx, cy, S, Sy, N;
@@ -186,7 +199,7 @@ function resize() {
   ctx.textBaseline = 'top';
   cols = Math.ceil(W / cw); rows = Math.ceil(H / ch);
   cx = cols / 2; cy = rows / 2;
-  S = 31; Sy = S * cw / ch;
+  S = 28; Sy = S * cw / ch;
   N = cols * rows;
 
   zb = new Float32Array(N); kd = new Uint8Array(N); idb = new Int16Array(N);
@@ -197,11 +210,11 @@ function resize() {
   for (let i = 0; i < N; i++) noise[i] = R() * 3 - 1.5;
 
   stars = [];
-  const nStars = Math.round(N / 80);
+  const nStars = Math.round(N / 52);
   for (let i = 0; i < nStars; i++) stars.push({
     i: (R() * rows | 0) * cols + (R() * cols | 0),
     c: STAR_CHARS[R() * STAR_CHARS.length | 0],
-    b: 0.25 + R() * 0.75, ph: R() * TAU, sp: 0.5 + R() * 2.4,
+    b: 0.5 + R() * 0.5, ph: R() * TAU, sp: 0.5 + R() * 2.4,
   });
   flares = [];
   const nFlares = Math.max(8, Math.round(N / 1500));
@@ -290,7 +303,7 @@ function drawLeaf(L, idx, g) {
 }
 
 function drawTepal(F, idx, k, e, sc, tx, ty, tz) {
-  const NU = F.bud ? 30 : 48, NV = F.bud ? 9 : 21, outer = k % 2 === 1, a = PI / 6 + k * PI / 3;
+  const NU = F.bud ? 30 : F.size < 1.2 ? 34 : 48, NV = F.bud ? 9 : F.size < 1.2 ? 15 : 21, outer = k % 2 === 1, a = PI / 6 + k * PI / 3;
   const marked = !F.bud && (k === 0 || k === 2);
   const ca = Math.cos(a), sa = Math.sin(a), L = 0.58, ds = L / NU;
   const W_ = (outer ? 0.205 : 0.15) * mix(0.55, 1, e);
@@ -380,19 +393,20 @@ function drawRibbon(g) {
 }
 
 // ---- sky and sparks --------------------------------------------------------
+let skyT = 0, skyGain = 0.5;
 function drawSky(t) {
   const fade = smooth(0, 1.2, t);
   for (const s of stars) {
-    const w = 0.5 + 0.5 * Math.sin(t * s.sp + s.ph), l = s.b * w * w * 0.75 * fade;
+    const w = 0.74 + 0.26 * Math.sin(t * s.sp + s.ph), l = s.b * w * w * 0.85 * fade * skyGain;
     if (l > bgl[s.i]) { bgl[s.i] = l; bgc[s.i] = s.c; }
   }
   for (const f of flares) {
     const w = Math.pow(Math.max(0, Math.sin(t * f.sp + f.ph)), 3) * fade;
     if (w < 0.03) continue;
     const L = Math.round(f.len * Math.sqrt(w));
-    putBg(f.c, f.r, C_STAR, w);
+    putBg(f.c, f.r, C_STAR, Math.min(1, w * skyGain));
     for (let d = 1; d <= L; d++) {
-      const l = w * 0.8 * (1 - d / (L + 1));
+      const l = w * 0.8 * skyGain * (1 - d / (L + 1));
       putBg(f.c + d, f.r, C_DASH, l); putBg(f.c - d, f.r, C_DASH, l);
       const v = Math.round(d * 0.55);
       if (d % 2 === 0) { putBg(f.c, f.r + v, C_BAR, l); putBg(f.c, f.r - v, C_BAR, l); }
@@ -424,7 +438,7 @@ function stepSparks(dt) {
 }
 
 // ---- output ----------------------------------------------------------------
-const TONES = 16, KINDS = PALETTE.length;
+const TONES = 16, SKY_TONES = 48, KINDS = PALETTE.length;
 const lists = [], fills = [];
 for (const [lo, hi] of PALETTE) for (let k = 0; k < TONES; k++) {
   const t = k / (TONES - 1), s = Math.sqrt(t), w = smooth(0.78, 1, t) * 0.4;
@@ -432,8 +446,8 @@ for (const [lo, hi] of PALETTE) for (let k = 0; k < TONES; k++) {
   fills.push(`rgb(${c(0)},${c(1)},${c(2)})`);
   lists.push([]);
 }
-for (let k = 0; k < TONES; k++) {  // sky
-  const t = (k + 1) / TONES;
+for (let k = 0; k < SKY_TONES; k++) {  // sky
+  const t = (k + 1) / SKY_TONES;
   fills.push(`rgb(${236 * t | 0},${230 * t | 0},${244 * t | 0})`);
   lists.push([]);
 }
@@ -446,7 +460,7 @@ function compose() {
     const i = r * cols + c, k = kd[i];
     if (!k) {
       const l = bgl[i];
-      if (l > 0.03) { out[i] = bgc[i]; lists[TONES * KINDS + Math.min(TONES - 1, l * TONES | 0)].push(i); }
+      if (l > 0.03) { out[i] = bgc[i]; lists[TONES * KINDS + Math.min(SKY_TONES - 1, l * SKY_TONES | 0)].push(i); }
       continue;
     }
     letters++;
@@ -522,9 +536,10 @@ function paint() {
 function render(t, dt) {
   zb.fill(-1e9); kd.fill(0); bgl.fill(0);
 
-  const swayA = t * 0.4, ga = 0.2 * Math.sin(swayA);
+  const pos = beatPos(t), swayA = pos * TAU / 8, ga = 0.09 * Math.sin(swayA + 0.5);
   vc = Math.cos(ga); vs = Math.sin(ga);
-  vLean = 0.12 * Math.sin(t * 0.55);
+  vLean = 0.34 * Math.sin(swayA);
+  skyGain = starGain(t, pos);
   const b = smooth(BLOOM[0], BLOOM[1], t);
   const budS = smooth(BUD[0], BUD[1], t);
 
@@ -550,8 +565,8 @@ function render(t, dt) {
     tube(s => pedicelAt(F, s), gp, 0.018, 0.013, 70, 100 + idx);
     if (budS <= 0) return;
     const tip = pedicelAt(F, gp);
-    const nod = 0.02 * Math.sin(t * 0.7 + F.ph);
-    const tx = tip[0] + nod, ty = tip[1] + nod * 0.6, tz = tip[2];
+    const nod = 0.05 * Math.sin(swayA - F.p[1] * 0.25 + F.ph * 0.15);
+    const tx = tip[0] + nod, ty = tip[1] + Math.abs(nod) * 0.2, tz = tip[2];
     const e = F.bud ? 0.04 * b : smooth(F.delay, F.delay + 0.58, b);
     const sc = budS * F.size * (F.bud ? 0.78 : mix(0.64, 1, e));
     for (let k = 0; k < 6; k++) {
@@ -575,158 +590,97 @@ function render(t, dt) {
   hudClock.textContent = 't ' + t.toFixed(2) + 's';
   hudStats.textContent =
     'bloom ' + (b * 100).toFixed(1) + '%\n' +
-    'sway ' + ((swayA * 180 / PI) % 360).toFixed(2) + '°\n' +
+    'sway ' + (((swayA * 180 / PI) % 360 + 360) % 360).toFixed(2) + '°\n' +
     'letters ' + letters.toLocaleString('en-US');
 }
 
-// ---- music -----------------------------------------------------------------
-// Original piano piece, 72 bpm in 4/4. The four intro bars last 13.33 s, so the
-// main theme enters as the last petals open (BLOOM ends at 13.5 s).
-const BPM = 72, BEAT = 60 / BPM, BAR = BEAT * 4, INTRO_BARS = 4, THEME_BARS = 8, AHEAD = 2, VOLUME = 0.72;
-const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+// ---- track and beat --------------------------------------------------------
+// The file holds 1:52-4:00 of the song. Beat times were measured from the audio;
+// the tempo drifts around 88 bpm, so a single bpm figure would slide off the music.
+const TRACK_URL = 'track.mp3', TRACK_LEN = 128, FADE_IN = 1.2, FADE_OUT = 3.5, VOLUME = 0.9;
+const BEATS = [0.163,0.871,1.567,2.276,2.972,3.657,4.354,5.05,5.747,6.432,7.129,7.837,8.533,9.218,9.903,10.577,11.297,12.016,12.678,13.363,14.036,14.733,15.418,16.149,16.811,17.519,18.17,18.808,19.505,20.213,20.921,21.653,22.349,23.046,23.731,24.393,25.02,25.646,26.285,26.97,27.69,28.386,29.071,29.78,30.453,31.161,31.835,32.543,33.216,33.808,34.4,35.051,35.701,36.386,37.036,37.721,38.417,39.056,39.683,40.321,40.972,41.668,42.353,42.945,43.526,44.211,44.861,45.558,46.219,47.113,47.81,48.472,49.145,49.83,50.527,51.293,52.082,52.779,53.441,54.149,54.822,55.484,56.123,56.761,57.342,57.992,58.654,59.339,60.024,60.685,61.591,62.288,62.926,63.576,64.226,64.946,65.654,66.432,67.106,67.733,68.418,69.114,69.939,70.67,71.401,72.121,72.806,73.445,74.118,74.757,75.651,76.324,76.974,77.624,78.263,78.959,79.668,80.469,81.119,81.769,82.651,83.36,83.987,84.718,85.449,86.169,86.866,87.516,88.166,88.793,89.455,90.047,90.744,91.452,92.16,92.88,93.6,94.412,95.074,95.701,96.328,97.048,97.756,98.429,99.091,99.823,100.566,101.204,101.878,102.493,103.375,104.014,104.652,105.279,105.918,106.545,107.299,108.031,108.681,109.308,109.958,110.655,111.421,112.129,112.837,113.557,114.207,114.834,115.473,116.088,116.75,117.365,118.039,118.747,119.443,120.128,120.86,121.556,122.218,122.845,123.507,124.157,124.772,125.411,126.073,126.758];
+const BEAT_POWER = [0.49,0.43,0.42,0.26,0.13,0.02,0.08,0.16,0.24,0.28,0.31,0.37,0.36,0.35,0.26,0.24,0.21,0.26,0.24,0.21,0.2,0.25,0.39,0.42,0.42,0.28,0.19,0.12,0.09,0.09,0.08,0.07,0.05,0.13,0.22,0.29,0.29,0.31,0.36,0.31,0.23,0.13,0.22,0.32,0.52,0.54,0.55,0.37,0.31,0.22,0.24,0.19,0.18,0.26,0.36,0.5,0.52,0.53,0.44,0.34,0.31,0.28,0.35,0.36,0.51,0.57,0.71,0.7,0.73,0.71,0.68,0.63,0.48,0.38,0.35,0.44,0.64,0.7,0.71,0.52,0.38,0.26,0.23,0.26,0.29,0.4,0.47,0.62,0.71,0.82,0.85,0.8,0.71,0.55,0.42,0.38,0.43,0.57,0.56,0.55,0.46,0.43,0.37,0.28,0.27,0.4,0.58,0.77,0.84,0.9,0.88,0.81,0.77,0.67,0.61,0.57,0.6,0.72,0.75,0.78,0.68,0.54,0.32,0.18,0.14,0.27,0.41,0.59,0.61,0.62,0.5,0.39,0.28,0.22,0.23,0.26,0.36,0.51,0.62,0.62,0.5,0.35,0.31,0.27,0.34,0.38,0.54,0.69,0.86,0.94,0.99,0.86,0.84,0.7,0.64,0.58,0.63,0.83,0.86,0.83,0.64,0.53,0.43,0.34,0.33,0.42,0.48,0.55,0.5,0.49,0.39,0.32,0.22,0.2,0.2,0.31,0.38,0.55,0.53,0.61,0.46,0.52,0.43,0.48,0.34,0.31];
 
-// Left-hand voicings per theme bar; a bar with two chords splits at beat 3.
-const CHORDS = [
-  [[48, 55, 59, 64]],                     // Cmaj7
-  [[47, 55, 62, 67]],                     // G/B
-  [[45, 52, 60, 67]],                     // Am7
-  [[41, 48, 57, 64]],                     // Fmaj7
-  [[38, 45, 57, 65]],                     // Dm7
-  [[43, 50, 59, 62]],                     // G
-  [[40, 47, 55, 62], [45, 52, 60, 67]],   // Em7 Am7
-  [[41, 48, 57, 64], [43, 50, 59, 65]],   // Fmaj7 G7
-];
-// Melody per theme bar: [beat, midi]
-const MELODY = [
-  [[0, 79], [2, 76], [3, 74], [3.5, 76]],
-  [[0, 74], [1.5, 67], [2, 71], [3, 74]],
-  [[0, 72], [1.5, 71], [2, 69], [3, 76]],
-  [[0, 72], [3, 69], [3.5, 72]],
-  [[0, 77], [1.5, 76], [2, 74], [3, 69]],
-  [[0, 71], [1.5, 74], [2, 79]],
-  [[0, 79], [1, 76], [2, 81], [3, 79], [3.5, 76]],
-  [[0, 77], [1.5, 76], [2, 74]],
-];
-const ARP = [0, 1, 2, 3, 2, 1, 2, 1];
-
-function piano(g, t, midi, vel) {
-  const { ac, bus, wave } = g, f = mtof(midi);
-  const tau = mix(1.9, 0.7, clamp((midi - 36) / 60)), end = t + tau * 4.5;
-  const o = ac.createOscillator(), lp = ac.createBiquadFilter(), a = ac.createGain();
-  o.setPeriodicWave(wave); o.frequency.value = f;
-  lp.type = 'lowpass'; lp.Q.value = 0.2;
-  lp.frequency.setValueAtTime(Math.min(9000, f * (3 + vel * 9) + 400), t);
-  lp.frequency.setTargetAtTime(f * 1.8 + 200, t + 0.01, 0.45);
-  a.gain.setValueAtTime(0, t);
-  a.gain.linearRampToValueAtTime(vel * 0.42, t + 0.005);
-  a.gain.setTargetAtTime(0, t + 0.005, tau);
-  o.connect(lp); lp.connect(a); a.connect(bus);
-  o.start(t); o.stop(end);
+// Continuous beat position: 12.5 is halfway between beats 12 and 13.
+function beatPos(t) {
+  const n = BEATS.length;
+  if (t < BEATS[0]) return (t - BEATS[0]) / (BEATS[1] - BEATS[0]);
+  if (t >= BEATS[n - 1]) return n - 1 + (t - BEATS[n - 1]) / (BEATS[n - 1] - BEATS[n - 2]);
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (BEATS[m] <= t) lo = m; else hi = m; }
+  return lo + (t - BEATS[lo]) / (BEATS[lo + 1] - BEATS[lo]);
 }
-function pad(g, t, midi, dur, vel) {
-  const { ac, bus } = g;
-  const o = ac.createOscillator(), lp = ac.createBiquadFilter(), a = ac.createGain();
-  o.type = 'triangle'; o.frequency.value = mtof(midi);
-  lp.type = 'lowpass'; lp.frequency.value = 850;
-  a.gain.setValueAtTime(0, t);
-  a.gain.linearRampToValueAtTime(vel, t + dur * 0.45);
-  a.gain.linearRampToValueAtTime(0, t + dur + 1.2);
-  o.connect(lp); lp.connect(a); a.connect(bus);
-  o.start(t); o.stop(t + dur + 1.3);
-}
-function scheduleBar(g, n, t0, minT) {
-  const hit = (beat, midi, vel) => { const t = t0 + beat * BEAT; if (t >= minT) piano(g, t, midi, vel); };
-  const arp = (chords, vel) => {
-    for (let i = 0; i < 8; i++) {
-      const c = chords[Math.floor(i / 8 * chords.length)];
-      hit(i / 2, c[ARP[i]], vel * (i === 0 ? 1.3 : i % 2 ? 0.8 : 1));
-    }
-  };
-  if (n === 0) { hit(0, 45, 0.5); hit(0, 57, 0.3); hit(1, 64, 0.26); hit(2, 67, 0.28); hit(3, 71, 0.3); return; }
-  if (n === 1) { hit(0, 41, 0.5); hit(0, 53, 0.3); hit(1, 60, 0.28); hit(2, 64, 0.3); hit(3, 69, 0.34); return; }
-  if (n === 2) {  // Dm9: the left hand starts moving as the buds begin to open
-    arp([[38, 45, 57, 64]], 0.24);
-    hit(0, 77, 0.42); hit(2, 76, 0.42); hit(3, 74, 0.44);
-    pad(g, t0, 62, BAR, 0.05); pad(g, t0, 69, BAR, 0.04);
-    return;
-  }
-  if (n === 3) {  // G: a rising run into the theme
-    arp([[43, 50, 59, 65]], 0.3);
-    hit(0, 79, 0.5);
-    [83, 86, 89, 91].forEach((m, i) => hit(2 + i * 0.5, m, 0.24 + i * 0.05));
-    pad(g, t0, 59, BAR, 0.07); pad(g, t0, 67, BAR, 0.06);
-    return;
-  }
-  const k = (n - INTRO_BARS) % (THEME_BARS * 2), pass = k >= THEME_BARS ? 1 : 0, b = k % THEME_BARS;
-  arp(CHORDS[b], pass ? 0.34 : 0.3);
-  const pv = pass ? 0.075 : 0.05, c0 = CHORDS[b][0];
-  pad(g, t0, c0[1] + 12, BAR, pv); pad(g, t0, c0[2], BAR, pv * 0.8);
-  for (const [beat, m] of MELODY[b]) {
-    hit(beat, m, 0.62);
-    hit(beat, m + 0.06, 0.26);          // slight detune warms the top line
-    if (pass) hit(beat, m + 12, 0.24);  // second time through, an octave above
-  }
-}
-function buildGraph(ac) {
-  const real = new Float32Array(8), imag = new Float32Array([0, 1, 0.52, 0.26, 0.14, 0.08, 0.05, 0.03]);
-  const wave = ac.createPeriodicWave(real, imag);
-  const len = Math.floor(ac.sampleRate * 2.8), ir = ac.createBuffer(2, len, ac.sampleRate), R = rng(5);
-  for (let ch_ = 0; ch_ < 2; ch_++) {
-    const d = ir.getChannelData(ch_); let y = 0;
-    for (let i = 0; i < len; i++) {
-      y += (R() * 2 - 1 - y) * 0.42;
-      d[i] = y * Math.exp(-i / ac.sampleRate / 0.72);
-    }
-  }
-  const verb = ac.createConvolver(); verb.buffer = ir;
-  const wet = ac.createGain(); wet.gain.value = 0.55;
-  const dry = ac.createGain(); dry.gain.value = 0.85;
-  const master = ac.createGain();
-  master.gain.value = VOLUME;
-  const comp = ac.createDynamicsCompressor();
-  comp.threshold.value = -9; comp.ratio.value = 8; comp.attack.value = 0.004; comp.release.value = 0.2;
-  verb.connect(wet); wet.connect(master); dry.connect(master); master.connect(comp); comp.connect(ac.destination);
-  const g = { ac, wave, master, dry, verb, bus: null };
-  newBus(g);
-  return g;
-}
-function newBus(g) {
-  const bus = g.ac.createGain();
-  bus.connect(g.dry); bus.connect(g.verb);
-  g.bus = bus;
+// Star brightness: a cosine that peaks on each beat, so it never jumps.
+function starGain(t, pos) {
+  const i = clamp(Math.floor(pos), 0, BEATS.length - 1), j = Math.min(i + 1, BEATS.length - 1);
+  const f = pos - Math.floor(pos);
+  const wave = 0.5 + 0.5 * Math.cos(TAU * f);
+  const power = 0.35 + 0.65 * mix(BEAT_POWER[i], BEAT_POWER[j], f);
+  const amount = smooth(0, 0.8, t) * (1 - smooth(TRACK_LEN - FADE_OUT, TRACK_LEN, t));
+  return 0.72 + 0.85 * wave * power * amount;
 }
 
 const FINAL_T = 16;
 const startBtn = document.getElementById('start');
+const startText = document.getElementById('startText');
+const startNote = document.getElementById('startNote');
 const controls = document.getElementById('controls');
 const soundBtn = document.getElementById('sound');
 const replayBtn = document.getElementById('replay');
-let clock = 0, last = 0, skyT = 0, started = false;
-let audio = null, muted = false, synced = false;
+let clock = 0, last = 0, started = false, startedAt = 0;
+let ac = null, trackBuf = null, master = null, voice = null, startAt = 0, muted = false;
 
-function startAudio() {
+function loadTrack() {
   const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return false;
-  try {
-    // Lets the sound play on an iPhone with the ringer switch off (Safari 16.4+).
-    if (navigator.audioSession) navigator.audioSession.type = 'playback';
-    const ac = new AC();
-    const g = buildGraph(ac);
-    audio = { ac, g, startAt: ac.currentTime, nextBar: 0 };
-    ac.resume();
-    synced = ac.state === 'running';
-    return true;
-  } catch (e) { audio = null; return false; }
+  const noMusic = () => {
+    startText.textContent = '> нажми, чтобы распустить';
+    startNote.hidden = true;
+    soundBtn.hidden = true;
+    startBtn.disabled = false;
+  };
+  if (!AC) { noMusic(); return; }
+  fetch(TRACK_URL)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then(data => {
+      ac = new AC();
+      master = ac.createGain();
+      master.gain.value = VOLUME;
+      master.connect(ac.destination);
+      return new Promise((ok, fail) => ac.decodeAudioData(data, ok, fail));
+    })
+    .then(buf => {
+      trackBuf = buf;
+      startText.textContent = '> нажми, чтобы распустить';
+      startBtn.disabled = false;
+      if (reduce) soundBtn.hidden = false;
+    })
+    .catch(noMusic);
 }
-function tick() {
-  if (!audio || audio.ac.state !== 'running') return;
-  const now = audio.ac.currentTime;
-  while (audio.startAt + audio.nextBar * BAR < now + AHEAD) {
-    scheduleBar(audio.g, audio.nextBar, audio.startAt + audio.nextBar * BAR, now);
-    audio.nextBar++;
+function unlockAudio() {
+  // Lets the sound play on an iPhone with the ringer switch off (Safari 16.4+).
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  if (ac) ac.resume();
+}
+function playTrack() {
+  if (!trackBuf) return;
+  if (voice) {
+    const now = ac.currentTime, old = voice;
+    old.g.gain.cancelScheduledValues(now);
+    old.g.gain.setTargetAtTime(0, now, 0.06);
+    old.s.stop(now + 0.4);
   }
+  const s = ac.createBufferSource(), g = ac.createGain(), t0 = ac.currentTime + 0.06;
+  const len = Math.min(trackBuf.duration, TRACK_LEN);
+  s.buffer = trackBuf;
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(1, t0 + FADE_IN);
+  g.gain.setValueAtTime(1, t0 + len - FADE_OUT);
+  g.gain.linearRampToValueAtTime(0, t0 + len);
+  s.connect(g); g.connect(master);
+  s.start(t0);
+  voice = { s, g };
+  startAt = t0;
 }
-setInterval(tick, 400);
 
 function loop(now) {
   requestAnimationFrame(loop);
@@ -736,59 +690,56 @@ function loop(now) {
   skyT += dt;
   if (started) {
     // The music is the clock while it runs, so the picture cannot drift from it.
-    if (audio && audio.ac.state === 'running') {
-      if (!synced) { audio.startAt = audio.ac.currentTime - clock; synced = true; }
-      clock = Math.max(0, audio.ac.currentTime - audio.startAt);
-    } else { clock += dt; synced = false; }
+    if (voice && ac.state === 'running') clock = Math.max(0, ac.currentTime - startAt);
+    else if (!voice || now - startedAt > 1500) clock += dt;
   }
   render(started ? clock : 0, started ? dt : 0);
 }
 function start() {
   if (started) return;
   started = true;
+  startedAt = performance.now();
   startBtn.hidden = true;
   controls.hidden = false;
   clock = 0;
-  if (startAudio()) tick(); else soundBtn.hidden = true;
+  unlockAudio();
+  playTrack();
 }
 function replay() {
   if (reduce) return;
   clock = 0; sparks = [];
-  if (!audio) return;
-  const { ac, g } = audio, old = g.bus;
-  old.gain.setTargetAtTime(0, ac.currentTime, 0.06);
-  setTimeout(() => old.disconnect(), 900);
-  newBus(g);
-  audio.startAt = ac.currentTime + 0.05;
-  audio.nextBar = 0;
-  synced = ac.state === 'running';
-  tick();
+  unlockAudio();
+  playTrack();
 }
 function setSoundLabel() { soundBtn.textContent = muted ? 'звук: выкл' : 'звук: вкл'; }
 soundBtn.addEventListener('click', () => {
-  if (!audio) {           // reduced-motion view has no start screen
+  if (!voice) {           // reduced-motion view has no start screen
+    if (!trackBuf) return;
     muted = false;
-    if (startAudio()) tick();
+    unlockAudio();
+    playTrack();
     setSoundLabel();
     return;
   }
   muted = !muted;
-  audio.g.master.gain.setTargetAtTime(muted ? 0 : VOLUME, audio.ac.currentTime, 0.05);
+  master.gain.setTargetAtTime(muted ? 0 : VOLUME, ac.currentTime, 0.05);
   setSoundLabel();
 });
 startBtn.addEventListener('click', start);
 replayBtn.addEventListener('click', replay);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && audio && audio.ac.state !== 'running') audio.ac.resume();
+  if (!document.hidden && ac && ac.state !== 'running') ac.resume();
 });
 window.addEventListener('resize', () => { resize(); if (reduce) render(FINAL_T, 0); });
 
 resize();
+loadTrack();
 if (reduce) {
   skyT = FINAL_T;
   startBtn.hidden = true;
   controls.hidden = false;
   replayBtn.hidden = true;
+  soundBtn.hidden = true;
   soundBtn.textContent = 'звук: выкл';
   render(FINAL_T, 0);
 } else requestAnimationFrame(loop);
